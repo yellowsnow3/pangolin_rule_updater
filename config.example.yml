@@ -26,7 +26,7 @@ server:
 
 clients:
   - name: home_office
-    secret: change-me-home-office-secret
+    secret: change-me-home-office-secret-min-32-chars!!
     rules:
       - resource_id: 1
         rule_id: 5
@@ -34,7 +34,7 @@ clients:
         rule_id: 9
 
   - name: mobile
-    secret: change-me-mobile-secret
+    secret: change-me-mobile-secret-also-min-32-chars!!!!
     rules:
       - resource_id: 1
         rule_id: 6
@@ -45,7 +45,7 @@ clients:
 
   # Example: client pointing at a different Pangolin instance
   # - name: remote_site
-  #   secret: change-me-remote-secret
+  #   secret: change-me-remote-secret-also-min-32-chars!!!
   #   pangolin_host: https://pangolin.other.example.com
   #   pangolin_api_key: OTHER_API_KEY
   #   rules:

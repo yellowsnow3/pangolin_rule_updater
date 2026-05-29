@@ -135,7 +135,7 @@ curl "https://update.example.com/update?token=my-secret-token"
 
 ## 🔒 Security notes
 
-- Use a strong random value for each client's `secret` (e.g. `openssl rand -hex 32`)
+- Use a strong random value for each client's `secret` — minimum 32 characters (e.g. `openssl rand -hex 32`). The server refuses to start if any secret is shorter.
 - Place the service behind a TLS-terminating reverse proxy (Pangolin itself, Traefik, nginx, etc.) so tokens are not sent in plain text
 - `config.yml` contains your secrets — restrict file permissions accordingly (`chmod 600 config.yml`)
 

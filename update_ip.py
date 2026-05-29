@@ -8,6 +8,7 @@ Configuration is loaded from a YAML file (default: config.yml, override with
 the CONFIG_FILE environment variable).
 """
 
+import hmac
 import ipaddress
 import json
 import os
@@ -19,6 +20,30 @@ from urllib.parse import urlparse, parse_qs
 
 import requests
 import yaml
+
+# Secrets shorter than this are rejected at startup.
+_MIN_SECRET_LEN = 32
+
+# Forwarded-IP headers are only trusted when the direct TCP peer is on a
+# private network (i.e. a reverse proxy container on the same Docker network).
+# Connections arriving from a public IP are served using the TCP peer address
+# so that a client cannot whitelist an arbitrary IP by forging these headers.
+_PRIVATE_NETWORKS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+]
+
+
+def _is_private_ip(addr: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(addr)
+        return any(ip in net for net in _PRIVATE_NETWORKS)
+    except ValueError:
+        return False
 
 
 # ── Configuration models ───────────────────────────────────────────────────────
@@ -83,6 +108,12 @@ def load_config(path: str) -> tuple[int, str, list[ClientConfig]]:
 
         if not secret:
             raise ValueError(f"Client {name!r}: secret must not be empty")
+        if len(secret) < _MIN_SECRET_LEN:
+            raise ValueError(
+                f"Client {name!r}: secret is too short "
+                f"({len(secret)} chars, minimum {_MIN_SECRET_LEN}). "
+                f"Generate one with: openssl rand -hex {_MIN_SECRET_LEN // 2}"
+            )
         if secret in seen_secrets:
             raise ValueError(f"Duplicate secret detected for client {name!r}")
         seen_secrets.add(secret)
@@ -143,8 +174,10 @@ def _update_pangolin_rule(host: str, api_key: str, rule: RuleTarget, ip: str) ->
     try:
         resp = _get_session(api_key).post(url, data=json.dumps(payload), timeout=10)
         if resp.status_code != 200:
+            # Truncate response body to avoid flooding logs with large payloads.
+            snippet = resp.text[:200].replace("\n", " ")
             print(f"[error] Rule {rule.rule_id} (resource {rule.resource_id}): "
-                  f"{resp.status_code} {resp.text}")
+                  f"{resp.status_code} {snippet}")
             return False
         print(f"[pangolin] rule {rule.rule_id} (resource {rule.resource_id}) → {ip}")
         return True
@@ -175,15 +208,57 @@ _HTML_ERROR  = "<html><body><h1>Error</h1><p>Update failed.</p></body></html>"
 
 
 def _extract_client_ip(handler: "UpdateHandler") -> str:
-    """Extract the real client IP, respecting common proxy headers."""
-    for header in ("Cf-Connecting-Ip", "X-Real-Ip"):
-        val = handler.headers.get(header, "").strip()
-        if val:
-            return val
+    """Extract the real client IP from the request.
+
+    Forwarded-IP headers (X-Real-Ip, Cf-Connecting-Ip, X-Forwarded-For) are
+    only trusted when the direct TCP peer is on a private network, meaning the
+    connection came through a trusted reverse proxy (e.g. Pangolin on the same
+    Docker network).  Direct connections from public IPs use the TCP peer
+    address so that forwarded headers cannot be forged to spoof the source IP.
+
+    For X-Forwarded-For the rightmost (last) entry is used because it is
+    appended by the last trusted hop and cannot be prepended by the client.
+    """
+    peer_ip = handler.client_address[0]
+
+    if not _is_private_ip(peer_ip):
+        # Direct connection from a public IP — ignore all forwarded headers.
+        return peer_ip
+
+    # X-Real-Ip: set directly by Nginx/Traefik/Pangolin to the client IP.
+    val = handler.headers.get("X-Real-Ip", "").strip()
+    if val:
+        return val
+
+    # Cf-Connecting-Ip: set by Cloudflare to the originating client IP.
+    val = handler.headers.get("Cf-Connecting-Ip", "").strip()
+    if val:
+        return val
+
+    # X-Forwarded-For: take the rightmost entry — it is appended by the last
+    # trusted proxy and cannot be prepended/forged by the client.
     fwd = handler.headers.get("X-Forwarded-For", "").strip()
     if fwd:
-        return fwd.split(",")[0].strip()
-    return handler.client_address[0]
+        return fwd.split(",")[-1].strip()
+
+    return peer_ip
+
+
+def _lookup_client(
+    client_map: dict[str, ClientConfig], token: str
+) -> Optional[ClientConfig]:
+    """Constant-time token lookup to prevent timing side-channel attacks.
+
+    Iterates every registered client using hmac.compare_digest so that the
+    response time does not reveal whether a submitted token is 'close' to a
+    valid one.  All comparisons run regardless of early matches.
+    """
+    result: Optional[ClientConfig] = None
+    token_bytes = token.encode()
+    for secret, client in client_map.items():
+        if hmac.compare_digest(secret.encode(), token_bytes):
+            result = client
+    return result
 
 
 class UpdateHandler(BaseHTTPRequestHandler):
@@ -199,7 +274,7 @@ class UpdateHandler(BaseHTTPRequestHandler):
             return
 
         token = parse_qs(parsed.query).get("token", [""])[0]
-        client = self._client_map.get(token)
+        client = _lookup_client(self._client_map, token)
         if not client:
             print("[warn] Unauthorized request — bad or missing token")
             self._send(401, _HTML_UNAUTH)
@@ -236,6 +311,8 @@ class UpdateHandler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(encoded)
 

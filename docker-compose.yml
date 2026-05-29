@@ -2,7 +2,21 @@ services:
   ip-updater:
     build: .
     restart: unless-stopped
-    ports:
-      - "8080:8080"   # adjust to match server.port in config.yml
+    expose:
+      - "8080"        # internal only — reachable via the shared proxy network
+    # Do NOT use `ports:` here unless you are testing locally.
+    # Binding the port to the host interface allows clients to bypass the
+    # reverse proxy and forge X-Forwarded-For / X-Real-Ip headers to spoof
+    # their source IP.  Instead, attach this service and Pangolin to the same
+    # Docker network so only Pangolin can reach it.
+    #
+    # Example shared network setup:
+    #
+    #   networks:
+    #     proxy:
+    #       external: true          # created by your Pangolin compose stack
+    #
+    # Then add `networks: [proxy]` to this service and configure Pangolin to
+    # forward requests to http://ip-updater:8080.
     volumes:
       - ./config.yml:/app/config.yml:ro
