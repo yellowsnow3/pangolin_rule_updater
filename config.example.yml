@@ -5,7 +5,7 @@
 # Base URL of your Pangolin instance (no trailing slash)
 pangolin_host: https://pangolin.example.com
 
-# Pangolin API Bearer token with "Resource Rule → List" and "Resource Rule → Update" permissions
+# Pangolin API Bearer token with "Resource Rule → Update Resource Rule" permission
 pangolin_api_key: YOUR_PANGOLIN_API_KEY
 
 # ── Server settings ────────────────────────────────────────────────────────────
@@ -18,8 +18,8 @@ server:
 #   GET http://<host>:<port><path>?token=<secret>
 # ...their originating IP is applied to every rule listed under that client.
 #
-# Rule settings (priority, action, match, enabled) are optional and default to:
-#   priority: 100 | action: ACCEPT | match: IP | enabled: true
+# Rule settings (priority, action, enabled) are optional and default to:
+#   priority: 100 | action: ACCEPT | enabled: true
 #
 # Per-client pangolin_host / pangolin_api_key overrides are supported for
 # multi-instance setups; they fall back to the global values above.
@@ -39,8 +39,7 @@ clients:
       - resource_id: 1
         rule_id: 6
         priority: 90        # optional override
-        action: ACCEPT      # optional: ACCEPT or DROP
-        match: IP           # optional: IP, CIDR, or PATH
+        action: ACCEPT      # optional: ACCEPT (bypass auth), DROP (block), or PASS (send to auth)
         enabled: true       # optional
 
   # Example: client pointing at a different Pangolin instance

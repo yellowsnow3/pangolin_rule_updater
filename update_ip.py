@@ -54,7 +54,6 @@ class RuleTarget:
     rule_id: int
     priority: int = 100
     action: str = "ACCEPT"
-    match: str = "IP"
     enabled: bool = True
 
 
@@ -71,18 +70,14 @@ class ClientConfig:
 # ── Config loading ─────────────────────────────────────────────────────────────
 
 def _parse_rule(raw: dict) -> RuleTarget:
-    match = str(raw.get("match", "IP")).upper()
-    if match not in ("IP", "CIDR", "PATH"):
-        raise ValueError(f"Invalid match value: {match!r} — must be IP, CIDR, or PATH")
     action = str(raw.get("action", "ACCEPT")).upper()
-    if action not in ("ACCEPT", "DROP"):
-        raise ValueError(f"Invalid action value: {action!r} — must be ACCEPT or DROP")
+    if action not in ("ACCEPT", "DROP", "PASS"):
+        raise ValueError(f"Invalid action value: {action!r} — must be ACCEPT, DROP, or PASS")
     return RuleTarget(
         resource_id=int(raw["resource_id"]),
         rule_id=int(raw["rule_id"]),
         priority=int(raw.get("priority", 100)),
         action=action,
-        match=match,
         enabled=bool(raw.get("enabled", True)),
     )
 
@@ -166,7 +161,7 @@ def _update_pangolin_rule(host: str, api_key: str, rule: RuleTarget, ip: str) ->
     url = f"{host}/v1/resource/{rule.resource_id}/rule/{rule.rule_id}"
     payload = {
         "action":   rule.action,
-        "match":    rule.match,
+        "match":    "IP",
         "value":    ip,
         "priority": rule.priority,
         "enabled":  rule.enabled,

@@ -74,8 +74,7 @@ clients:
       - resource_id: 1
         rule_id: 6
         priority: 90                 # optional, default: 100
-        action: ACCEPT               # optional: ACCEPT or DROP, default: ACCEPT
-        match: IP                    # optional: IP, CIDR, or PATH, default: IP
+        action: ACCEPT               # optional: ACCEPT, DROP, or PASS — default: ACCEPT
         enabled: true                # optional, default: true
 ```
 
@@ -107,8 +106,7 @@ clients:
 | `resource_id` | ✅ | — | Resource ID in Pangolin |
 | `rule_id` | ✅ | — | Rule ID to update |
 | `priority` | ❌ | `100` | Rule priority |
-| `action` | ❌ | `ACCEPT` | `ACCEPT` or `DROP` |
-| `match` | ❌ | `IP` | `IP`, `CIDR`, or `PATH` |
+| `action` | ❌ | `ACCEPT` | `ACCEPT` — bypass auth; `DROP` — block; `PASS` — send to auth |
 | `enabled` | ❌ | `true` | Enable or disable the rule |
 
 ## 🚀 Usage
