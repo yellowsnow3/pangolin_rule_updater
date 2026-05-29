@@ -1,32 +1,30 @@
-# Dynamic IP Updater for Pangolin Rules
+# Pangolin Rule Updater
 
 [![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 [![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)](https://www.python.org/)
 
-A lightweight Docker container that automatically monitors your external IP address and updates Pangolin firewall rules when changes are detected. Perfect for home servers, VPS instances, or any infrastructure that needs dynamic IP-based access rules.
+A lightweight Docker container that exposes a webhook endpoint. When a client calls the endpoint with their secret token, their originating IP is automatically applied to every Pangolin firewall rule mapped to that token.
+
+Multiple clients and tokens are supported — each token has its own set of resources/rules defined in the server-side configuration, so clients never need to know which resources they are whitelisting.
 
 ## ✨ Features
 
-- **Automatic IP Monitoring** — checks your external IP on a configurable interval
-- **Smart Updates** — only calls the Pangolin API when the IP actually changes (local cache, no unnecessary reads)
-- **Rotating IP Services** — round-robins across multiple IP-check endpoints to reduce fingerprinting
-- **Jittered Intervals** — adds random ± seconds to each check to avoid predictable traffic patterns
-- **Exponential Backoff** — backs off gracefully on transient errors instead of hammering the API
-- **Persistent HTTP Session** — reuses the TCP connection to Pangolin for lower overhead
-- **Dynamic DNS Support** — resolve a hostname instead of checking this machine's own IP
-- **Webhook / Trigger Mode** — expose an HTTP endpoint so an external source (e.g. your browser, a cron, a reverse proxy) pushes its IP directly
-- **Environment-Based Config** — everything managed through a `.env` file
-- **Docker Compose Ready** — single-command deployment
+- **Push-based updates** — clients send a single HTTP GET; the server does the rest
+- **Multi-client** — any number of tokens, each mapped to their own set of Pangolin rules
+- **Multi-rule per client** — one push updates all rules for that client atomically
+- **Per-client IP cache** — skips Pangolin API calls when the IP hasn't changed
+- **Per-client Pangolin overrides** — optional `pangolin_host` / `pangolin_api_key` per client for multi-instance setups
+- **YAML config** — single `config.yml` file; no env-variable sprawl
+- **Docker Compose ready** — single-command deployment
 
 ## 📋 Prerequisites
 
 - Docker and Docker Compose
-- Pangolin Integration API enabled: https://docs.digpangolin.com/manage/integration-api
-- Valid Pangolin API access token with:
-  - `Resource Rule → List Resource Rules`
+- Pangolin Integration API enabled: https://docs.pangolin.net/manage/integration-api
+- A Pangolin API token with:
   - `Resource Rule → Update Resource Rule`
-- The Rule ID you want to keep updated
-  - Visit the Swagger UI at `https://<your-pangolin>/v1/docs`, authorize with your token, and call `GET /resource/{resourceId}/rules` to list rules and find your Rule ID
+- The Resource ID(s) and Rule ID(s) you want to keep updated
+  - Visit the Swagger UI at `https://<your-pangolin>/v1/docs`, authorize with your token, and call `GET /resource/{resourceId}/rules` to list rules
 
 ## 🛠️ Installation
 
@@ -36,12 +34,12 @@ A lightweight Docker container that automatically monitors your external IP addr
    cd pangolin_rule_updater
    ```
 
-2. **Create your environment file**
+2. **Create your config file**
    ```bash
-   cp example.env .env
+   cp config.example.yml config.yml
    ```
 
-3. **Configure your settings** (see [Configuration](#️-configuration) below)
+3. **Edit `config.yml`** — set your Pangolin host, API key, and define your clients (see [Configuration](#️-configuration) below)
 
 4. **Build and start**
    ```bash
@@ -50,250 +48,160 @@ A lightweight Docker container that automatically monitors your external IP addr
 
 ## ⚙️ Configuration
 
-Create a `.env` file in the project root:
+All configuration lives in `config.yml` (mounted into the container as a read-only volume).
 
-```env
-# Pangolin credentials
-API_KEY=YOUR_LONG_BEARER_TOKEN
-RESOURCE_ID=1
-RULE_ID=1
-RULE_PRIORITY=1
-RULE_ACTION=ACCEPT
-RULE_MATCH=IP                # IP, CIDR, PATH
-RULE_ENABLED=True
-TARGET_DOMAIN=               # dynamic DNS hostname — leave empty to use this machine's IP
+```yaml
+# Pangolin instance (global defaults, can be overridden per client)
+pangolin_host: https://pangolin.example.com
+pangolin_api_key: YOUR_PANGOLIN_API_KEY
 
-PANGOLIN_HOST=https://api.pangolin.example
+server:
+  port: 8080      # port this service listens on
+  path: /update   # URL path for update requests
 
-# Runtime controls (optional)
-IP_SERVICE_URL=https://wtfismyip.com/text,https://api.ipify.org,https://icanhazip.com
-LOOP_SECONDS=60              # check interval in seconds
-LOOP_JITTER=10               # ± random seconds added to each interval
+clients:
+  - name: home_office
+    secret: my-secret-token          # clients send ?token=<this value>
+    rules:
+      - resource_id: 1
+        rule_id: 5
+      - resource_id: 2
+        rule_id: 9                   # both rules updated on every push
 
-# Webhook trigger (optional)
-EXPOSE_TRIGGER_WEBSITE=False
-TRIGGER_WEBSITE_DOMAIN=trigger.my.dyn.dns.com
-TRIGGER_WEBSITE_PATH=/update
-TRIGGER_WEBSITE_PORT=8080
-TRIGGER_SECRET=              # recommended when EXPOSE_TRIGGER_WEBSITE=True
+  - name: mobile
+    secret: another-secret-token
+    rules:
+      - resource_id: 1
+        rule_id: 6
+        priority: 90                 # optional, default: 100
+        action: ACCEPT               # optional: ACCEPT or DROP, default: ACCEPT
+        match: IP                    # optional: IP, CIDR, or PATH, default: IP
+        enabled: true                # optional, default: true
 ```
 
 ### Configuration reference
 
-| Parameter | Required | Default | Description |
-|-----------|:--------:|---------|-------------|
-| `API_KEY` | ✅ | — | Pangolin API Bearer token |
-| `RESOURCE_ID` | ✅ | — | Resource ID in Pangolin |
-| `RULE_ID` | ✅ | — | Rule ID to update |
-| `PANGOLIN_HOST` | ✅ | `https://api.pangolin.example` | Pangolin API base URL |
-| `RULE_PRIORITY` | ❌ | `100` | Rule priority |
-| `RULE_ACTION` | ❌ | `ACCEPT` | `ACCEPT` or `DROP` |
-| `RULE_MATCH` | ❌ | `IP` | `IP`, `CIDR`, or `PATH` |
-| `RULE_ENABLED` | ❌ | `True` | Enable or disable the rule |
-| `TARGET_DOMAIN` | ❌ | — | Resolve this hostname instead of checking machine's external IP |
-| `IP_SERVICE_URL` | ❌ | three built-in services | Comma-separated list of plain-text IP services, rotated round-robin |
-| `LOOP_SECONDS` | ❌ | `60` | Base check interval in seconds |
-| `LOOP_JITTER` | ❌ | `10` | Random ± seconds added to each interval |
-| `EXPOSE_TRIGGER_WEBSITE` | ❌ | `False` | Enable webhook trigger mode (disables automatic polling) |
-| `TRIGGER_WEBSITE_DOMAIN` | ❌ | `trigger.my.dyn.dns.com` | Expected `Host` header for the trigger endpoint |
-| `TRIGGER_WEBSITE_PATH` | ❌ | `/update` | Path for the trigger endpoint |
-| `TRIGGER_WEBSITE_PORT` | ❌ | `8080` | Port the trigger server listens on |
-| `TRIGGER_SECRET` | ❌ | — | If set, requests must include `?token=<value>`; missing/wrong token → HTTP 401 |
+**Top-level**
+
+| Key | Required | Description |
+|-----|:--------:|-------------|
+| `pangolin_host` | ✅ | Base URL of your Pangolin instance |
+| `pangolin_api_key` | ✅ | Pangolin API Bearer token |
+| `server.port` | ❌ | Port to listen on (default: `8080`) |
+| `server.path` | ❌ | URL path for update requests (default: `/update`) |
+
+**Per client**
+
+| Key | Required | Description |
+|-----|:--------:|-------------|
+| `name` | ✅ | Human-readable label (used in logs) |
+| `secret` | ✅ | Token the client sends as `?token=<secret>` |
+| `rules` | ✅ | List of rules to update (at least one) |
+| `pangolin_host` | ❌ | Overrides the global `pangolin_host` for this client |
+| `pangolin_api_key` | ❌ | Overrides the global `pangolin_api_key` for this client |
+
+**Per rule**
+
+| Key | Required | Default | Description |
+|-----|:--------:|---------|-------------|
+| `resource_id` | ✅ | — | Resource ID in Pangolin |
+| `rule_id` | ✅ | — | Rule ID to update |
+| `priority` | ❌ | `100` | Rule priority |
+| `action` | ❌ | `ACCEPT` | `ACCEPT` or `DROP` |
+| `match` | ❌ | `IP` | `IP`, `CIDR`, or `PATH` |
+| `enabled` | ❌ | `true` | Enable or disable the rule |
 
 ## 🚀 Usage
 
-### Start the service
+Each client sends a plain HTTP GET to the endpoint with their secret token. The server reads the originating IP from the request (supporting `Cf-Connecting-Ip`, `X-Real-Ip`, `X-Forwarded-For`, and direct TCP) and applies it to all rules configured for that token.
+
+```
+GET http://<host>:8080/update?token=my-secret-token
+```
+
+**Example — trigger from a browser bookmark or cron:**
 ```bash
+curl "https://update.example.com/update?token=my-secret-token"
+```
+
+**Response codes**
+
+| Code | Meaning |
+|------|---------|
+| `200` | All rules updated (or IP unchanged — no update needed) |
+| `207` | Partial success — some rules updated, check logs |
+| `401` | Bad or missing token |
+| `500` | All rule updates failed |
+
+## 🔒 Security notes
+
+- Use a strong random value for each client's `secret` (e.g. `openssl rand -hex 32`)
+- Place the service behind a TLS-terminating reverse proxy (Pangolin itself, Traefik, nginx, etc.) so tokens are not sent in plain text
+- `config.yml` contains your secrets — restrict file permissions accordingly (`chmod 600 config.yml`)
+
+## 🚀 Common commands
+
+```bash
+# Start
 docker compose up -d
-```
 
-### View logs
-```bash
+# View live logs
 docker compose logs -f
-```
 
-### Stop the service
-```bash
-docker compose down
-```
-
-### Rebuild after changes
-```bash
+# Rebuild after code or config changes
 docker compose build --no-cache && docker compose up -d
-```
 
-### Using dynamic DNS
-
-Set `TARGET_DOMAIN` to your DynDNS hostname. The script will resolve its IP instead of detecting this machine's external IP.
-
-```env
-TARGET_DOMAIN=my.dyn.dns.com
-```
-
-### Using the webhook trigger
-
-When `EXPOSE_TRIGGER_WEBSITE=True`, automatic polling is disabled. Instead, a tiny HTTP server listens for incoming connections and uses the **requester's IP** to update the rule. This is handy when the device that needs access can initiate the request itself.
-
-Enable the port in `docker-compose.yml`:
-
-```yaml
-services:
-  ip-updater:
-    build: .
-    env_file: .env
-    restart: unless-stopped
-    ports:
-      - "${TRIGGER_WEBSITE_PORT}:${TRIGGER_WEBSITE_PORT}"
-```
-
-Set in `.env`:
-
-```env
-EXPOSE_TRIGGER_WEBSITE=True
-TRIGGER_WEBSITE_DOMAIN=trigger.my.dyn.dns.com
-TRIGGER_WEBSITE_PATH=/update
-TRIGGER_WEBSITE_PORT=8080
-```
-
-> ⚠️ **Security note:** Anyone who can reach this endpoint can update your firewall rule. Set `TRIGGER_SECRET` and share the full URL including `?token=…` only with trusted users. See [Securing the trigger endpoint](#securing-the-trigger-endpoint) below.
-
-## 🐳 Stack deployment in Portainer (example)
-
-```yaml
-services:
-  pangolin-rule-updater:
-    container_name: pangolin-rule-updater
-    build:
-      context: https://github.com/olizimmermann/pangolin_rule_updater.git#main
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    environment:
-      # --- Required ---
-      API_KEY: YOUR_API_TOKEN
-      RESOURCE_ID: "1"
-      RULE_ID: "1"
-      PANGOLIN_HOST: "https://api.example.com"
-
-      # --- Optional ---
-      RULE_PRIORITY: "1"
-      RULE_ACTION: "ACCEPT"
-      RULE_MATCH: "IP"
-      RULE_ENABLED: "True"
-
-      IP_SERVICE_URL: "https://wtfismyip.com/text,https://api.ipify.org"
-      LOOP_SECONDS: "60"
-      LOOP_JITTER: "10"
+# Stop
+docker compose down
 ```
 
 ## 📁 Project structure
 
 ```
-pangolin-ip-updater/
+pangolin_rule_updater/
 ├── Dockerfile              # Container definition
 ├── docker-compose.yml      # Service orchestration
-├── update_ip.py            # Main application logic
+├── update_ip.py            # Application
 ├── requirements.txt        # Python dependencies
-├── example.env             # Template for environment variables
-├── .env                    # Your actual config (create this, never commit it)
+├── config.example.yml      # Template — copy to config.yml
 └── README.md
 ```
 
-## 🔧 API reference
+## 🔧 Pangolin API reference
 
-### List rules
+### List rules for a resource
 ```bash
-curl -X GET \
-  'https://api.pangolin.example/v1/resource/{RESOURCE_ID}/rules' \
-  -H 'Authorization: Bearer {API_KEY}'
+curl 'https://pangolin.example.com/v1/resource/<RESOURCE_ID>/rules' \
+  -H 'Authorization: Bearer <API_KEY>'
 ```
 
-### Update rule
+### Manually update a rule
 ```bash
 curl -X POST \
-  'https://api.pangolin.example/v1/resource/{RESOURCE_ID}/rule/{RULE_ID}' \
+  'https://pangolin.example.com/v1/resource/<RESOURCE_ID>/rule/<RULE_ID>' \
+  -H 'Authorization: Bearer <API_KEY>' \
   -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer {API_KEY}' \
-  -d '{"action":"ACCEPT","match":"IP","value":"1.2.3.4","priority":1,"enabled":true}'
+  -d '{"action":"ACCEPT","match":"IP","value":"1.2.3.4","priority":100,"enabled":true}'
 ```
 
 ## 🐛 Troubleshooting
 
 | Symptom | Check |
 |---------|-------|
-| Container exits immediately | `.env` exists and has all required variables; API key is valid |
-| `401` / auth errors | `API_KEY` correct and active; `Bearer` prefix is added automatically |
-| Rule not updating | Correct `RESOURCE_ID` + `RULE_ID`; test with the curl commands above |
-| Network errors | Container has internet access; try a different `IP_SERVICE_URL` |
-
-**View live logs:**
-```bash
-docker compose logs -f
-```
-
-## 🔒 Security considerations
-
-- **Never commit `.env`** — it contains your API credentials
-- Restrict file permissions: `chmod 600 .env`
-- Use Docker secrets for production deployments
-- Rotate API keys regularly
-
-## Securing the trigger endpoint
-
-When `EXPOSE_TRIGGER_WEBSITE=True`, protect the endpoint with `TRIGGER_SECRET`:
-
-```env
-TRIGGER_SECRET=replace-with-a-long-random-string
-```
-
-Requests without a matching `?token=` query parameter are rejected with HTTP 401 and logged as a warning. The full trigger URL then becomes a **magic link**:
-
-```
-https://trigger.my.dyn.dns.com/update?token=replace-with-a-long-random-string
-```
-
-Bookmark this URL on your phone or laptop — one tap updates the rule, no app required.
-
-**Path hardening:** The default path `/update` is predictable. If you do not set `TRIGGER_SECRET`, use a random webhook-style path instead — something like `/trigger/a3f8c2e1b7d94f05` — so the endpoint is not trivially discoverable by scanners. If `TRIGGER_SECRET` is set, the path matters less, but there is no reason not to change the default anyway.
-
-**Port:** Avoid well-known ports (80, 443, 8080, 8443) — they attract the most automated scanning traffic. Pick a random high port (e.g. 47823) to reduce noise. This is not a security control on its own, but it lowers the number of unsolicited probes you will see in the logs.
-
-**A note on subdomain privacy and CT logs:** If you use HTTP-01 or TLS-ALPN-01 ACME validation to obtain a TLS certificate for the trigger subdomain, the subdomain will appear in public Certificate Transparency logs (searchable at [crt.sh](https://crt.sh)). If you want the subdomain to stay private, use a wildcard certificate obtained via DNS-01 challenge instead. Regardless of subdomain visibility, `TRIGGER_SECRET` is the primary access control.
-
-**Worst-case abuse:** An attacker who successfully calls the endpoint can whitelist their own IP address, which grants them direct access to your protected resources — no credentials required. That is the entire point of the rule. Keep the token secret and rotate it if compromised.
-
-## 🚀 Advanced usage
-
-### Custom check intervals
-```env
-LOOP_SECONDS=300   # check every 5 minutes
-LOOP_JITTER=30     # ± 30 s randomisation
-```
-
-### IPv6
-```env
-IP_SERVICE_URL=https://api6.ipify.org
-```
-
-### Multiple rules
-Deploy separate containers with different `.env` files:
-```bash
-docker compose -f docker-compose.rule1.yml up -d
-docker compose -f docker-compose.rule2.yml up -d
-```
+| Container exits immediately | `config.yml` is mounted and valid; run `docker compose logs` for details |
+| `401` on update requests | Token in the request matches the `secret` in `config.yml` |
+| Rules not updating | Correct `resource_id` / `rule_id`; test with the curl commands above |
+| Pangolin auth errors | `pangolin_api_key` is valid and has `Resource Rule → Update` permission |
 
 ## ⭐ Like this project?
-
-If this saved you time, please consider giving it a star on GitHub — it helps others find the project and motivates further development!
 
 [![Star on GitHub](https://img.shields.io/github/stars/olizimmermann/pangolin_rule_updater?style=social)](https://github.com/olizimmermann/pangolin_rule_updater)
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Open a Pull Request
 
 ## 📝 License
 
@@ -301,10 +209,6 @@ MIT — see the [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
-- [Pangolin](https://github.com/fosrl/pangolin) for the great self-hosted tunneling platform
-- [ipify](https://www.ipify.org/) for a reliable IP detection API
-- Docker community for containerisation best practices
-
----
+- [Pangolin](https://github.com/fosrl/pangolin) for the great self-hosted tunnelling platform
 
 **Found a bug or have a question? Open an [issue](https://github.com/olizimmermann/pangolin_rule_updater/issues).**

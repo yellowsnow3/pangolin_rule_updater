@@ -1,0 +1,53 @@
+# Pangolin Rule Updater — Example Configuration
+# Copy this file to config.yml and fill in your values.
+
+# ── Pangolin connection ────────────────────────────────────────────────────────
+# Base URL of your Pangolin instance (no trailing slash)
+pangolin_host: https://pangolin.example.com
+
+# Pangolin API Bearer token with "Resource Rule → List" and "Resource Rule → Update" permissions
+pangolin_api_key: YOUR_PANGOLIN_API_KEY
+
+# ── Server settings ────────────────────────────────────────────────────────────
+server:
+  port: 8080       # Port this service listens on
+  path: /update    # URL path that accepts update requests
+
+# ── Client definitions ─────────────────────────────────────────────────────────
+# Each client has a unique secret token. When a client calls:
+#   GET http://<host>:<port><path>?token=<secret>
+# ...their originating IP is applied to every rule listed under that client.
+#
+# Rule settings (priority, action, match, enabled) are optional and default to:
+#   priority: 100 | action: ACCEPT | match: IP | enabled: true
+#
+# Per-client pangolin_host / pangolin_api_key overrides are supported for
+# multi-instance setups; they fall back to the global values above.
+
+clients:
+  - name: home_office
+    secret: change-me-home-office-secret
+    rules:
+      - resource_id: 1
+        rule_id: 5
+      - resource_id: 2
+        rule_id: 9
+
+  - name: mobile
+    secret: change-me-mobile-secret
+    rules:
+      - resource_id: 1
+        rule_id: 6
+        priority: 90        # optional override
+        action: ACCEPT      # optional: ACCEPT or DROP
+        match: IP           # optional: IP, CIDR, or PATH
+        enabled: true       # optional
+
+  # Example: client pointing at a different Pangolin instance
+  # - name: remote_site
+  #   secret: change-me-remote-secret
+  #   pangolin_host: https://pangolin.other.example.com
+  #   pangolin_api_key: OTHER_API_KEY
+  #   rules:
+  #     - resource_id: 3
+  #       rule_id: 11
