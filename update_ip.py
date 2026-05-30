@@ -1,8 +1,8 @@
 """Pangolin Rule Updater — multi-client webhook server.
 
 Each client has a unique secret token mapped to one or more Pangolin rules.
-When a client calls GET /update?token=<secret>, their originating IP is applied
-to every rule defined for that token.
+When a client calls GET /update with an `Authorization: Bearer <secret>` header,
+their originating IP is applied to every rule defined for that token.
 
 Configuration is loaded from a YAML file (default: config.yml, override with
 the CONFIG_FILE environment variable).
@@ -16,7 +16,7 @@ import sys
 from dataclasses import dataclass, field
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Optional
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 
 import requests
 import yaml
@@ -268,7 +268,8 @@ class UpdateHandler(BaseHTTPRequestHandler):
             self._send(404, "<h1>Not Found</h1>")
             return
 
-        token = parse_qs(parsed.query).get("token", [""])[0]
+        auth = self.headers.get("Authorization", "")
+        token = auth[len("Bearer "):].strip() if auth.startswith("Bearer ") else ""
         client = _lookup_client(self._client_map, token)
         if not client:
             print("[warn] Unauthorized request — bad or missing token")

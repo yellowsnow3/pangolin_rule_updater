@@ -61,7 +61,7 @@ server:
 
 clients:
   - name: home_office
-    secret: my-secret-token          # clients send ?token=<this value>
+    secret: my-secret-token          # clients send: Authorization: Bearer <secret>
     rules:
       - resource_id: 1
         rule_id: 5
@@ -94,7 +94,7 @@ clients:
 | Key | Required | Description |
 |-----|:--------:|-------------|
 | `name` | ✅ | Human-readable label (used in logs) |
-| `secret` | ✅ | Token the client sends as `?token=<secret>` |
+| `secret` | ✅ | Token sent as `Authorization: Bearer <secret>` header |
 | `rules` | ✅ | List of rules to update (at least one) |
 | `pangolin_host` | ❌ | Overrides the global `pangolin_host` for this client |
 | `pangolin_api_key` | ❌ | Overrides the global `pangolin_api_key` for this client |
@@ -114,12 +114,13 @@ clients:
 Each client sends a plain HTTP GET to the endpoint with their secret token. The server reads the originating IP from the request (supporting `Cf-Connecting-Ip`, `X-Real-Ip`, `X-Forwarded-For`, and direct TCP) and applies it to all rules configured for that token.
 
 ```
-GET http://<host>:8080/update?token=my-secret-token
+GET http://<host>:8080/update
+Authorization: Bearer my-secret-token
 ```
 
-**Example — trigger from a browser bookmark or cron:**
+**Example — trigger from cron or a script:**
 ```bash
-curl "https://update.example.com/update?token=my-secret-token"
+curl -H "Authorization: Bearer my-secret-token" "https://update.example.com/update"
 ```
 
 **Response codes**
